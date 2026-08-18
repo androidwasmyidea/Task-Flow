@@ -1,0 +1,1054 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>TaskFlow — Time Blocking Planner</title>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+
+<body>
+
+<div id="app">
+
+    <!-- ======================================================
+         SIDEBAR
+    ======================================================= -->
+
+    <aside class="sidebar">
+
+        <div class="brand">
+            <div class="brand-logo">T</div>
+
+            <div class="brand-text">
+                <strong>TaskFlow</strong>
+                <span>Time Blocking</span>
+            </div>
+        </div>
+
+        <button
+            class="add-task-button"
+            id="sidebarAddTask">
+            <span>+</span>
+            Add Task
+        </button>
+
+        <nav class="main-navigation">
+
+            <div class="navigation-section-title">
+                Workspace
+            </div>
+
+            <button
+                class="nav-button active"
+                data-view="today">
+
+                <span class="nav-icon">◷</span>
+
+                <span>Today</span>
+
+                <span
+                    class="nav-count"
+                    id="todayTaskCount">
+                    0
+                </span>
+
+            </button>
+
+            <button
+                class="nav-button"
+                data-view="inbox">
+
+                <span class="nav-icon">□</span>
+
+                <span>Inbox</span>
+
+                <span
+                    class="nav-count"
+                    id="inboxTaskCount">
+                    0
+                </span>
+
+            </button>
+
+            <button
+                class="nav-button"
+                data-view="upcoming">
+
+                <span class="nav-icon">▣</span>
+
+                <span>Upcoming</span>
+
+            </button>
+
+            <button
+                class="nav-button"
+                data-view="completed">
+
+                <span class="nav-icon">✓</span>
+
+                <span>Completed</span>
+
+            </button>
+
+            <div class="navigation-section-title">
+                Planning
+            </div>
+
+            <button
+                class="nav-button"
+                id="autoPlanButton">
+
+                <span class="nav-icon">✦</span>
+
+                <span>Auto Plan</span>
+
+            </button>
+
+            <button
+                class="nav-button"
+                id="clearScheduleButton">
+
+                <span class="nav-icon">↻</span>
+
+                <span>Clear Schedule</span>
+
+            </button>
+
+        </nav>
+
+        <div class="sidebar-bottom">
+
+            <button
+                class="nav-button"
+                id="themeButton">
+
+                <span class="nav-icon">◐</span>
+
+                <span>Dark Mode</span>
+
+            </button>
+
+            <button
+                class="nav-button"
+                id="settingsButton">
+
+                <span class="nav-icon">⚙</span>
+
+                <span>Settings</span>
+
+            </button>
+
+        </div>
+
+    </aside>
+
+
+    <!-- ======================================================
+         MAIN AREA
+    ======================================================= -->
+
+    <main class="main">
+
+        <!-- TOPBAR -->
+
+        <header class="topbar">
+
+            <div class="topbar-left">
+
+                <button
+                    class="mobile-menu-button"
+                    id="mobileMenuButton">
+                    ☰
+                </button>
+
+                <div>
+
+                    <h1 id="pageTitle">
+                        Today
+                    </h1>
+
+                    <p id="pageSubtitle">
+                        Plan your day
+                    </p>
+
+                </div>
+
+            </div>
+
+
+            <div class="topbar-actions">
+
+                <button
+                    class="icon-button"
+                    id="searchButton"
+                    title="Search">
+                    ⌕
+                </button>
+
+                <button
+                    class="secondary-button"
+                    id="todayButton">
+                    Today
+                </button>
+
+                <button
+                    class="primary-button"
+                    id="topAddTask">
+                    + Add Task
+                </button>
+
+            </div>
+
+        </header>
+
+
+        <!-- CONTENT -->
+
+        <div class="content">
+
+            <!-- DASHBOARD STATS -->
+
+            <section class="stats-grid">
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ✓
+                    </div>
+
+                    <div>
+                        <span class="stat-label">
+                            Completed
+                        </span>
+
+                        <strong id="completedStat">
+                            0
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        ◷
+                    </div>
+
+                    <div>
+                        <span class="stat-label">
+                            Planned
+                        </span>
+
+                        <strong id="plannedStat">
+                            0m
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        □
+                    </div>
+
+                    <div>
+                        <span class="stat-label">
+                            Remaining
+                        </span>
+
+                        <strong id="remainingStat">
+                            0m
+                        </strong>
+                    </div>
+
+                </div>
+
+
+                <div class="stat-card">
+
+                    <div class="stat-icon">
+                        %
+                    </div>
+
+                    <div>
+                        <span class="stat-label">
+                            Progress
+                        </span>
+
+                        <strong id="progressStat">
+                            0%
+                        </strong>
+                    </div>
+
+                </div>
+
+            </section>
+
+
+            <!-- MAIN GRID -->
+
+            <section class="workspace-grid">
+
+                <!-- TASK PANEL -->
+
+                <section class="panel task-panel">
+
+                    <div class="panel-header">
+
+                        <div>
+
+                            <h2>
+                                Tasks
+                            </h2>
+
+                            <span id="taskPanelSubtitle">
+                                Your tasks
+                            </span>
+
+                        </div>
+
+                        <div class="panel-header-actions">
+
+                            <button
+                                class="small-button"
+                                id="filterButton">
+                                Filter
+                            </button>
+
+                            <button
+                                class="small-button primary-small"
+                                id="panelAddTask">
+                                +
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- FILTER BAR -->
+
+                    <div
+                        class="filter-bar hidden"
+                        id="filterBar">
+
+                        <select id="priorityFilter">
+
+                            <option value="all">
+                                All priorities
+                            </option>
+
+                            <option value="high">
+                                High priority
+                            </option>
+
+                            <option value="medium">
+                                Medium priority
+                            </option>
+
+                            <option value="low">
+                                Low priority
+                            </option>
+
+                        </select>
+
+
+                        <select id="scheduleFilter">
+
+                            <option value="all">
+                                All tasks
+                            </option>
+
+                            <option value="scheduled">
+                                Scheduled
+                            </option>
+
+                            <option value="unscheduled">
+                                Unscheduled
+                            </option>
+
+                        </select>
+
+                    </div>
+
+
+                    <div
+                        class="task-list"
+                        id="taskList">
+
+                    </div>
+
+                </section>
+
+
+                <!-- CALENDAR PANEL -->
+
+                <section class="panel calendar-panel">
+
+                    <div class="calendar-toolbar">
+
+                        <div class="calendar-date-controls">
+
+                            <button
+                                class="calendar-nav-button"
+                                id="previousDay">
+                                ‹
+                            </button>
+
+                            <button
+                                class="calendar-nav-button"
+                                id="nextDay">
+                                ›
+                            </button>
+
+                            <button
+                                class="secondary-button"
+                                id="calendarToday">
+                                Today
+                            </button>
+
+                            <h2 id="calendarDate">
+                                Today
+                            </h2>
+
+                        </div>
+
+
+                        <div class="calendar-actions">
+
+                            <button
+                                class="view-button active"
+                                data-calendar-view="day">
+                                Day
+                            </button>
+
+                            <button
+                                class="view-button"
+                                data-calendar-view="week">
+                                Week
+                            </button>
+
+                            <button
+                                class="small-button"
+                                id="addBlockButton">
+                                + Block
+                            </button>
+
+                        </div>
+
+                    </div>
+
+
+                    <!-- CALENDAR -->
+
+                    <div
+                        class="calendar-container"
+                        id="calendarContainer">
+
+                        <div
+                            class="time-label-column"
+                            id="timeLabels">
+                        </div>
+
+                        <div
+                            class="calendar-timeline"
+                            id="calendarTimeline">
+
+                            <div
+                                class="calendar-grid-lines"
+                                id="calendarGridLines">
+                            </div>
+
+                            <div
+                                class="calendar-blocks"
+                                id="calendarBlocks">
+                            </div>
+
+                            <div
+                                class="current-time-line hidden"
+                                id="currentTimeLine">
+
+                                <span></span>
+
+                            </div>
+
+                        </div>
+
+                    </div>
+
+                </section>
+
+            </section>
+
+        </div>
+
+    </main>
+
+</div>
+
+
+<!-- ======================================================
+     TASK MODAL
+======================================================= -->
+
+<div
+    class="modal-overlay hidden"
+    id="taskModal">
+
+    <div class="modal">
+
+        <div class="modal-header">
+
+            <div>
+
+                <h2 id="taskModalTitle">
+                    Add Task
+                </h2>
+
+                <p>
+                    Add a task to your planner.
+                </p>
+
+            </div>
+
+            <button
+                class="modal-close"
+                data-close-modal="taskModal">
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="taskForm">
+
+            <input
+                type="hidden"
+                id="editingTaskId">
+
+
+            <div class="form-group">
+
+                <label for="taskTitle">
+                    Task
+                </label>
+
+                <input
+                    id="taskTitle"
+                    type="text"
+                    placeholder="e.g. Study Physics"
+                    maxlength="150"
+                    required>
+
+            </div>
+
+
+            <div class="form-row">
+
+                <div class="form-group">
+
+                    <label for="taskDuration">
+                        Duration
+                    </label>
+
+                    <select id="taskDuration">
+
+                        <option value="15">
+                            15 minutes
+                        </option>
+
+                        <option value="30">
+                            30 minutes
+                        </option>
+
+                        <option value="45">
+                            45 minutes
+                        </option>
+
+                        <option value="60" selected>
+                            1 hour
+                        </option>
+
+                        <option value="75">
+                            1 hour 15 minutes
+                        </option>
+
+                        <option value="90">
+                            1 hour 30 minutes
+                        </option>
+
+                        <option value="120">
+                            2 hours
+                        </option>
+
+                        <option value="150">
+                            2 hours 30 minutes
+                        </option>
+
+                        <option value="180">
+                            3 hours
+                        </option>
+
+                        <option value="240">
+                            4 hours
+                        </option>
+
+                    </select>
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="taskPriority">
+                        Priority
+                    </label>
+
+                    <select id="taskPriority">
+
+                        <option value="high">
+                            High
+                        </option>
+
+                        <option value="medium" selected>
+                            Medium
+                        </option>
+
+                        <option value="low">
+                            Low
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <div class="form-row">
+
+                <div class="form-group">
+
+                    <label for="taskDate">
+                        Date
+                    </label>
+
+                    <input
+                        id="taskDate"
+                        type="date">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label for="taskDeadline">
+                        Deadline
+                    </label>
+
+                    <input
+                        id="taskDeadline"
+                        type="date">
+
+                </div>
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label for="taskProject">
+                    Project
+                </label>
+
+                <input
+                    id="taskProject"
+                    type="text"
+                    placeholder="e.g. Physics">
+
+            </div>
+
+
+            <div class="form-group">
+
+                <label for="taskNotes">
+                    Notes
+                </label>
+
+                <textarea
+                    id="taskNotes"
+                    rows="4"
+                    placeholder="Optional notes...">
+                </textarea>
+
+            </div>
+
+
+            <div class="modal-footer">
+
+                <button
+                    type="button"
+                    class="secondary-button"
+                    data-close-modal="taskModal">
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-button">
+                    Save Task
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- ======================================================
+     BLOCK MODAL
+======================================================= -->
+
+<div
+    class="modal-overlay hidden"
+    id="blockModal">
+
+    <div class="modal">
+
+        <div class="modal-header">
+
+            <div>
+
+                <h2>
+                    Add Time Block
+                </h2>
+
+                <p>
+                    Reserve time on your calendar.
+                </p>
+
+            </div>
+
+            <button
+                class="modal-close"
+                data-close-modal="blockModal">
+                ×
+            </button>
+
+        </div>
+
+
+        <form id="blockForm">
+
+            <div class="form-group">
+
+                <label for="blockTitle">
+                    Block name
+                </label>
+
+                <input
+                    id="blockTitle"
+                    type="text"
+                    placeholder="e.g. Lunch"
+                    required>
+
+            </div>
+
+
+            <div class="form-row">
+
+                <div class="form-group">
+
+                    <label for="blockDate">
+                        Date
+                    </label>
+
+                    <input
+                        id="blockDate"
+                        type="date"
+                        required>
+
+                </div>
+
+                <div class="form-group">
+
+                    <label for="blockStart">
+                        Start
+                    </label>
+
+                    <input
+                        id="blockStart"
+                        type="time"
+                        value="09:00"
+                        required>
+
+                </div>
+
+            </div>
+
+
+            <div class="form-row">
+
+                <div class="form-group">
+
+                    <label for="blockDuration">
+                        Duration
+                    </label>
+
+                    <select id="blockDuration">
+
+                        <option value="15">
+                            15 minutes
+                        </option>
+
+                        <option value="30" selected>
+                            30 minutes
+                        </option>
+
+                        <option value="45">
+                            45 minutes
+                        </option>
+
+                        <option value="60">
+                            1 hour
+                        </option>
+
+                        <option value="90">
+                            1 hour 30 minutes
+                        </option>
+
+                        <option value="120">
+                            2 hours
+                        </option>
+
+                    </select>
+
+                </div>
+
+            </div>
+
+
+            <div class="modal-footer">
+
+                <button
+                    type="button"
+                    class="secondary-button"
+                    data-close-modal="blockModal">
+                    Cancel
+                </button>
+
+                <button
+                    type="submit"
+                    class="primary-button">
+                    Add Block
+                </button>
+
+            </div>
+
+        </form>
+
+    </div>
+
+</div>
+
+
+<!-- ======================================================
+     SEARCH MODAL
+======================================================= -->
+
+<div
+    class="modal-overlay hidden"
+    id="searchModal">
+
+    <div class="modal search-modal">
+
+        <div class="modal-header">
+
+            <div>
+
+                <h2>
+                    Search
+                </h2>
+
+                <p>
+                    Search your tasks.
+                </p>
+
+            </div>
+
+            <button
+                class="modal-close"
+                data-close-modal="searchModal">
+                ×
+            </button>
+
+        </div>
+
+
+        <input
+            id="searchInput"
+            class="search-input"
+            type="search"
+            placeholder="Search tasks...">
+
+        <div
+            id="searchResults"
+            class="search-results">
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- ======================================================
+     SETTINGS MODAL
+======================================================= -->
+
+<div
+    class="modal-overlay hidden"
+    id="settingsModal">
+
+    <div class="modal">
+
+        <div class="modal-header">
+
+            <div>
+
+                <h2>
+                    Settings
+                </h2>
+
+                <p>
+                    Configure your planner.
+                </p>
+
+            </div>
+
+            <button
+                class="modal-close"
+                data-close-modal="settingsModal">
+                ×
+            </button>
+
+        </div>
+
+
+        <div class="settings-section">
+
+            <h3>
+                Working hours
+            </h3>
+
+            <p>
+                Auto Planner will place tasks inside these hours.
+            </p>
+
+
+            <div class="form-row">
+
+                <div class="form-group">
+
+                    <label>
+                        Start
+                    </label>
+
+                    <input
+                        type="time"
+                        id="workingStart"
+                        value="09:00">
+
+                </div>
+
+
+                <div class="form-group">
+
+                    <label>
+                        End
+                    </label>
+
+                    <input
+                        type="time"
+                        id="workingEnd"
+                        value="22:00">
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="settings-section">
+
+            <h3>
+                Data
+            </h3>
+
+            <div class="settings-buttons">
+
+                <button
+                    class="secondary-button"
+                    id="exportData">
+                    Export Data
+                </button>
+
+                <button
+                    class="secondary-button"
+                    id="importData">
+                    Import Data
+                </button>
+
+                <button
+                    class="danger-button"
+                    id="resetData">
+                    Reset Everything
+                </button>
+
+            </div>
+
+            <input
+                type="file"
+                id="importFile"
+                accept=".json"
+                hidden>
+
+        </div>
+
+
+        <div class="modal-footer">
+
+            <button
+                class="primary-button"
+                data-close-modal="settingsModal">
+                Done
+            </button>
+
+        </div>
+
+    </div>
+
+</div>
+
+
+<!-- TOAST -->
+
+<div
+    class="toast-container"
+    id="toastContainer">
+</div>
+
+
+<script src="app.js"></script>
+
+</body>
+</html>

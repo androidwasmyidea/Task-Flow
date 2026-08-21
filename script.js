@@ -1,663 +1,4159 @@
-const STORAGE_KEY = "taskflow.tasks.v1";
-const THEME_KEY = "taskflow.theme.v1";
+/* ============================================================
+   TASKFLOW
+   Standalone Time Blocking Planner
+============================================================ */
 
-const state = {
-  tasks: loadTasks(),
-  currentDate: startOfDay(new Date()),
-  view: "day",
-  filter: "all",
-  editingId: null
+
+/* ============================================================
+   STORAGE
+============================================================ */
+
+const STORAGE_KEYS = {
+
+    TASKS: "taskflow_tasks_v3",
+
+    BLOCKS: "taskflow_blocks_v3",
+
+    SETTINGS: "taskflow_settings_v3",
+
+    THEME: "taskflow_theme_v3"
+
 };
 
-const $ = (selector) => document.querySelector(selector);
-const $$ = (selector) => [...document.querySelectorAll(selector)];
 
-function uid() {
-  return "task_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 8);
+const DEFAULT_SETTINGS = {
+
+    workingStart: "09:00",
+
+    workingEnd: "22:00"
+
+};
+
+
+let tasks = loadData(
+    STORAGE_KEYS.TASKS,
+    []
+);
+
+
+let manualBlocks = loadData(
+    STORAGE_KEYS.BLOCKS,
+    []
+);
+
+
+let settings = loadData(
+    STORAGE_KEYS.SETTINGS,
+    DEFAULT_SETTINGS
+);
+
+
+let selectedDate = new Date();
+
+let currentView = "today";
+
+let calendarView = "day";
+
+let draggedItem = null;
+
+let currentSearchTerm = "";
+
+
+/* ============================================================
+   DOM
+============================================================ */
+
+const $ = selector =>
+    document.querySelector(selector);
+
+
+const $$ = selector =>
+    [...document.querySelectorAll(selector)];
+
+
+/* ============================================================
+   INITIALIZATION
+============================================================ */
+
+document.addEventListener(
+    "DOMContentLoaded",
+    initialize
+);
+
+
+function initialize() {
+
+    initializeEventListeners();
+
+    initializeSettings();
+
+    initializeTheme();
+
+    renderApplication();
+
+    updateCurrentTimeLine();
+
+    setInterval(
+        updateCurrentTimeLine,
+        60000
+    );
+
 }
 
-function loadTasks() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    const data = raw ? JSON.parse(raw) : [];
-    return Array.isArray(data) ? data : [];
-  } catch {
-    return [];
-  }
+
+/* ============================================================
+   STORAGE FUNCTIONS
+============================================================ */
+
+function loadData(key, fallback) {
+
+    try {
+
+        const stored =
+            localStorage.getItem(key);
+
+        if (!stored) {
+
+            return fallback;
+
+        }
+
+        return JSON.parse(stored);
+
+    } catch (error) {
+
+        console.error(
+            "Storage error:",
+            error
+        );
+
+        return fallback;
+
+    }
+
 }
+
 
 function saveTasks() {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(state.tasks));
+
+    localStorage.setItem(
+        STORAGE_KEYS.TASKS,
+        JSON.stringify(tasks)
+    );
+
 }
 
-function startOfDay(value) {
-  const d = new Date(value);
-  d.setHours(0, 0, 0, 0);
-  return d;
+
+function saveBlocks() {
+
+    localStorage.setItem(
+        STORAGE_KEYS.BLOCKS,
+        JSON.stringify(manualBlocks)
+    );
+
 }
 
-function dateKey(value) {
-  const d = new Date(value);
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}-${m}-${day}`;
+
+function saveSettings() {
+
+    localStorage.setItem(
+        STORAGE_KEYS.SETTINGS,
+        JSON.stringify(settings)
+    );
+
 }
 
-function parseDateKey(key) {
-  if (!key) return null;
-  const [y, m, d] = key.split("-").map(Number);
-  const date = new Date(y, m - 1, d);
-  return Number.isNaN(date.getTime()) ? null : date;
+
+/* ============================================================
+   DATE UTILITIES
+============================================================ */
+
+function dateKey(date) {
+
+    const year =
+        date.getFullYear();
+
+    const month =
+        String(
+            date.getMonth() + 1
+        ).padStart(2, "0");
+
+    const day =
+        String(
+            date.getDate()
+        ).padStart(2, "0");
+
+    return `${year}-${month}-${day}`;
+
 }
 
-function formatDate(value, options = {}) {
-  return new Intl.DateTimeFormat(undefined, options).format(new Date(value));
+
+function parseDate(key) {
+
+    const [
+        year,
+        month,
+        day
+    ] = key.split("-").map(Number);
+
+    return new Date(
+        year,
+        month - 1,
+        day
+    );
+
 }
 
-function formatDuration(minutes) {
-  if (minutes < 60) return `${minutes} min`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins ? `${hours}h ${mins}m` : `${hours}h`;
-}
-
-function minutesFromTime(time) {
-  const [h, m] = String(time).split(":").map(Number);
-  return h * 60 + m;
-}
-
-function timeFromMinutes(total) {
-  const safe = Math.max(0, Math.min(1439, total));
-  const h = Math.floor(safe / 60);
-  const m = safe % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function prettyTime(minutes) {
-  const d = new Date();
-  d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-  return formatDate(d, { hour: "numeric", minute: "2-digit" });
-}
-
-function escapeHTML(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function normalizeTask(task) {
-  return {
-    id: task.id || uid(),
-    title: String(task.title || "Untitled task"),
-    duration: Math.max(5, Number(task.duration) || 30),
-    priority: ["low", "medium", "high"].includes(task.priority) ? task.priority : "medium",
-    deadline: task.deadline || "",
-    notes: task.notes || "",
-    completed: Boolean(task.completed),
-    scheduledDate: task.scheduledDate || null,
-    startMinutes: Number.isFinite(Number(task.startMinutes)) ? Number(task.startMinutes) : null,
-    createdAt: task.createdAt || Date.now()
-  };
-}
-
-function createTask(data) {
-  return normalizeTask({
-    ...data,
-    id: uid(),
-    createdAt: Date.now()
-  });
-}
-
-function taskMatchesFilter(task) {
-  if (state.filter === "all") return true;
-  if (state.filter === "high") return task.priority === "high" && !task.completed;
-  if (state.filter === "unscheduled") return !task.scheduledDate && !task.completed;
-  if (state.filter === "completed") return task.completed;
-  return true;
-}
-
-function visibleTasks() {
-  return state.tasks
-    .filter(taskMatchesFilter)
-    .sort((a, b) => {
-      if (a.completed !== b.completed) return Number(a.completed) - Number(b.completed);
-      const priority = { high: 0, medium: 1, low: 2 };
-      if (priority[a.priority] !== priority[b.priority]) {
-        return priority[a.priority] - priority[b.priority];
-      }
-      return a.createdAt - b.createdAt;
-    });
-}
-
-function tasksForDate(key) {
-  return state.tasks
-    .filter(t => t.scheduledDate === key)
-    .sort((a, b) => (a.startMinutes ?? 0) - (b.startMinutes ?? 0));
-}
 
 function isToday(date) {
-  return dateKey(date) === dateKey(new Date());
+
+    return dateKey(date) ===
+        dateKey(new Date());
+
 }
 
-function getWeekStart(date) {
-  const d = startOfDay(date);
-  const day = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  d.setDate(d.getDate() + diff);
-  return d;
+
+function formatDate(date) {
+
+    return date.toLocaleDateString(
+        "en-IN",
+        {
+            weekday: "long",
+            day: "numeric",
+            month: "long"
+        }
+    );
+
 }
 
-function addDays(date, amount) {
-  const d = new Date(date);
-  d.setDate(d.getDate() + amount);
-  return d;
+
+function formatShortDate(key) {
+
+    if (!key) return "No date";
+
+    const date =
+        parseDate(key);
+
+    return date.toLocaleDateString(
+        "en-IN",
+        {
+            day: "numeric",
+            month: "short"
+        }
+    );
+
 }
 
-function render() {
-  renderCounts();
-  renderTaskList();
-  renderDay();
-  renderWeek();
-  renderTaskTable();
-  updateViewVisibility();
+
+/* ============================================================
+   TIME UTILITIES
+============================================================ */
+
+function timeToMinutes(time) {
+
+    if (!time) return 0;
+
+    const [
+        hours,
+        minutes
+    ] = time.split(":").map(Number);
+
+    return (
+        hours * 60 +
+        minutes
+    );
+
 }
 
-function renderCounts() {
-  const active = state.tasks.filter(t => !t.completed);
-  $("#inboxCount").textContent = active.length;
-  $("#allCount").textContent = active.length;
-  $("#highCount").textContent = active.filter(t => t.priority === "high").length;
-  $("#unscheduledCount").textContent = active.filter(t => !t.scheduledDate).length;
-  $("#completedCount").textContent = state.tasks.filter(t => t.completed).length;
+
+function minutesToTime(minutes) {
+
+    const hours =
+        Math.floor(minutes / 60);
+
+    const mins =
+        minutes % 60;
+
+    return (
+        String(hours).padStart(2, "0") +
+        ":" +
+        String(mins).padStart(2, "0")
+    );
+
 }
 
-function renderTaskList() {
-  const list = $("#taskList");
-  const empty = $("#emptyTasks");
-  const tasks = visibleTasks();
 
-  list.innerHTML = tasks.slice(0, 100).map(task => {
-    const scheduled = task.scheduledDate
-      ? `${formatDate(parseDateKey(task.scheduledDate), { month: "short", day: "numeric" })} ${prettyTime(task.startMinutes ?? 0)}`
-      : "Unscheduled";
+function formatTime(minutes) {
 
-    return `
-      <article class="task-card" data-task-id="${escapeHTML(task.id)}">
-        <div class="task-main">
-          <button class="check ${task.completed ? "done" : ""}" data-action="complete" data-id="${escapeHTML(task.id)}" aria-label="Complete task"></button>
-          <div>
-            <p class="task-title ${task.completed ? "done" : ""}">${escapeHTML(task.title)}</p>
-          </div>
-        </div>
-        <div class="task-meta">
-          <span class="badge">${formatDuration(task.duration)}</span>
-          <span class="badge ${task.priority}">${escapeHTML(task.priority)}</span>
-          <span class="badge">${escapeHTML(scheduled)}</span>
-        </div>
-      </article>
-    `;
-  }).join("");
+    minutes =
+        Math.max(
+            0,
+            Math.min(
+                1439,
+                minutes
+            )
+        );
 
-  empty.classList.toggle("hidden", tasks.length !== 0);
+    let hours =
+        Math.floor(
+            minutes / 60
+        );
+
+    const mins =
+        minutes % 60;
+
+    const suffix =
+        hours >= 12
+            ? "PM"
+            : "AM";
+
+    hours =
+        hours % 12;
+
+    if (hours === 0) {
+
+        hours = 12;
+
+    }
+
+    return (
+        hours +
+        ":" +
+        String(mins).padStart(2, "0") +
+        " " +
+        suffix
+    );
+
 }
 
-function renderDay() {
-  const key = dateKey(state.currentDate);
-  const title = isToday(state.currentDate)
-    ? "Today"
-    : formatDate(state.currentDate, { weekday: "long", month: "long", day: "numeric" });
 
-  $("#dayTitle").textContent = title;
-  $("#dayDateLabel").textContent = formatDate(state.currentDate, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-    year: "numeric"
-  });
+function formatDuration(minutes) {
 
-  const timeline = $("#timeline");
-  const startHour = 0;
-  const endHour = 24;
-  const hourHeight = 64;
+    if (minutes < 60) {
 
-  timeline.innerHTML = Array.from({ length: endHour - startHour }, (_, index) => {
-    const hour = startHour + index;
-    return `
-      <div class="hour-row" data-hour="${hour}">
-        <span class="hour-label">${formatHour(hour)}</span>
-        <div class="hour-line"></div>
-        <div class="quarter-line"></div>
-      </div>
-    `;
-  }).join("");
+        return `${minutes}m`;
 
-  tasksForDate(key).forEach(task => {
-    if (task.startMinutes == null) return;
-    const top = task.startMinutes / 60 * hourHeight;
-    const height = Math.max(26, task.duration / 60 * hourHeight - 3);
-    const element = document.createElement("div");
-    element.className = `calendar-task ${task.priority} ${task.completed ? "completed" : ""}`;
-    element.style.top = `${top}px`;
-    element.style.height = `${height}px`;
-    element.dataset.taskId = task.id;
-    element.innerHTML = `
-      <strong>${escapeHTML(task.title)}</strong>
-      <small>${prettyTime(task.startMinutes)} · ${formatDuration(task.duration)}</small>
-    `;
-    timeline.appendChild(element);
-  });
+    }
 
-  if (isToday(state.currentDate)) {
-    const now = new Date();
-    const currentMinutes = now.getHours() * 60 + now.getMinutes();
-    const line = document.createElement("div");
-    line.className = "current-time";
-    line.style.top = `${currentMinutes / 60 * hourHeight}px`;
-    timeline.appendChild(line);
-  }
+    const hours =
+        Math.floor(
+            minutes / 60
+        );
+
+    const remaining =
+        minutes % 60;
+
+    if (remaining === 0) {
+
+        return `${hours}h`;
+
+    }
+
+    return `${hours}h ${remaining}m`;
+
 }
 
-function formatHour(hour) {
-  const d = new Date();
-  d.setHours(hour, 0, 0, 0);
-  return formatDate(d, { hour: "numeric" });
+
+/* ============================================================
+   ID GENERATOR
+============================================================ */
+
+function generateId(prefix = "item") {
+
+    return (
+        prefix +
+        "_" +
+        Date.now() +
+        "_" +
+        Math.random()
+            .toString(36)
+            .slice(2, 8)
+    );
+
 }
 
-function renderWeek() {
-  const start = getWeekStart(state.currentDate);
-  const end = addDays(start, 6);
 
-  $("#weekTitle").textContent =
-    `${formatDate(start, { month: "short", day: "numeric" })} – ${formatDate(end, { month: "short", day: "numeric", year: "numeric" })}`;
+/* ============================================================
+   EVENT LISTENERS
+============================================================ */
 
-  $("#weekGrid").innerHTML = Array.from({ length: 7 }, (_, i) => {
-    const date = addDays(start, i);
-    const key = dateKey(date);
-    const tasks = tasksForDate(key);
+function initializeEventListeners() {
 
-    return `
-      <div class="week-day ${isToday(date) ? "today" : ""}" data-date="${key}">
-        <div class="week-day-header">
-          <strong>${formatDate(date, { weekday: "short" })}</strong>
-          <span>${formatDate(date, { month: "short", day: "numeric" })}</span>
-        </div>
-        ${tasks.map(task => `
-          <div class="week-task" data-task-id="${escapeHTML(task.id)}">
-            <strong>${escapeHTML(task.title)}</strong>
-            <small>${prettyTime(task.startMinutes ?? 0)} · ${formatDuration(task.duration)}</small>
-          </div>
-        `).join("")}
-      </div>
-    `;
-  }).join("");
+    $("#sidebarAddTask")
+        .addEventListener(
+            "click",
+            () => openTaskModal()
+        );
+
+
+    $("#topAddTask")
+        .addEventListener(
+            "click",
+            () => openTaskModal()
+        );
+
+
+    $("#panelAddTask")
+        .addEventListener(
+            "click",
+            () => openTaskModal()
+        );
+
+
+    $("#todayButton")
+        .addEventListener(
+            "click",
+            goToday
+        );
+
+
+    $("#calendarToday")
+        .addEventListener(
+            "click",
+            goToday
+        );
+
+
+    $("#previousDay")
+        .addEventListener(
+            "click",
+            () => changeDate(-1)
+        );
+
+
+    $("#nextDay")
+        .addEventListener(
+            "click",
+            () => changeDate(1)
+        );
+
+
+    $("#autoPlanButton")
+        .addEventListener(
+            "click",
+            autoPlan
+        );
+
+
+    $("#clearScheduleButton")
+        .addEventListener(
+            "click",
+            clearSchedule
+        );
+
+
+    $("#addBlockButton")
+        .addEventListener(
+            "click",
+            openBlockModal
+        );
+
+
+    $("#filterButton")
+        .addEventListener(
+            "click",
+            toggleFilters
+        );
+
+
+    $("#priorityFilter")
+        .addEventListener(
+            "change",
+            renderTasks
+        );
+
+
+    $("#scheduleFilter")
+        .addEventListener(
+            "change",
+            renderTasks
+        );
+
+
+    $("#themeButton")
+        .addEventListener(
+            "click",
+            toggleTheme
+        );
+
+
+    $("#settingsButton")
+        .addEventListener(
+            "click",
+            openSettings
+        );
+
+
+    $("#searchButton")
+        .addEventListener(
+            "click",
+            openSearch
+        );
+
+
+    $("#mobileMenuButton")
+        .addEventListener(
+            "click",
+            toggleMobileSidebar
+        );
+
+
+    $("#taskForm")
+        .addEventListener(
+            "submit",
+            saveTaskFromForm
+        );
+
+
+    $("#blockForm")
+        .addEventListener(
+            "submit",
+            saveBlockFromForm
+        );
+
+
+    $("#searchInput")
+        .addEventListener(
+            "input",
+            renderSearchResults
+        );
+
+
+    $("#exportData")
+        .addEventListener(
+            "click",
+            exportData
+        );
+
+
+    $("#importData")
+        .addEventListener(
+            "click",
+            () =>
+                $("#importFile").click()
+        );
+
+
+    $("#importFile")
+        .addEventListener(
+            "change",
+            importData
+        );
+
+
+    $("#resetData")
+        .addEventListener(
+            "click",
+            resetEverything
+        );
+
+
+    $("#workingStart")
+        .addEventListener(
+            "change",
+            saveWorkingHours
+        );
+
+
+    $("#workingEnd")
+        .addEventListener(
+            "change",
+            saveWorkingHours
+        );
+
+
+    $$("[data-close-modal]")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    closeModal(
+                        button.dataset.closeModal
+                    );
+
+                }
+            );
+
+        });
+
+
+    $$(".modal-overlay")
+        .forEach(overlay => {
+
+            overlay.addEventListener(
+                "click",
+                event => {
+
+                    if (
+                        event.target ===
+                        overlay
+                    ) {
+
+                        overlay.classList.add(
+                            "hidden"
+                        );
+
+                    }
+
+                }
+            );
+
+        });
+
+
+    $$(".nav-button[data-view]")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    currentView =
+                        button.dataset.view;
+
+                    $$(".nav-button[data-view]")
+                        .forEach(item =>
+                            item.classList.remove(
+                                "active"
+                            )
+                        );
+
+                    button.classList.add(
+                        "active"
+                    );
+
+                    renderApplication();
+
+                    closeMobileSidebar();
+
+                }
+            );
+
+        });
+
+
+    $$(".view-button")
+        .forEach(button => {
+
+            button.addEventListener(
+                "click",
+                () => {
+
+                    calendarView =
+                        button.dataset.calendarView;
+
+                    $$(".view-button")
+                        .forEach(item =>
+                            item.classList.remove(
+                                "active"
+                            )
+                        );
+
+                    button.classList.add(
+                        "active"
+                    );
+
+                    renderCalendar();
+
+                }
+            );
+
+        });
+
+
+    document.addEventListener(
+        "keydown",
+        handleKeyboardShortcuts
+    );
+
 }
 
-function renderTaskTable() {
-  const table = $("#taskTable");
-  const tasks = state.tasks.slice().sort((a, b) => b.createdAt - a.createdAt);
 
-  table.innerHTML = tasks.map(task => {
-    const scheduled = task.scheduledDate
-      ? `${formatDate(parseDateKey(task.scheduledDate), { month: "short", day: "numeric" })} · ${prettyTime(task.startMinutes ?? 0)}`
-      : "Not scheduled";
+/* ============================================================
+   MODALS
+============================================================ */
 
-    return `
-      <div class="task-row" data-task-id="${escapeHTML(task.id)}">
-        <div>
-          <div class="row-title">${escapeHTML(task.title)}</div>
-          ${task.deadline ? `<div class="row-sub">Deadline: ${escapeHTML(task.deadline)}</div>` : ""}
-        </div>
-        <div>${formatDuration(task.duration)}</div>
-        <div><span class="badge ${task.priority}">${escapeHTML(task.priority)}</span></div>
-        <div>${escapeHTML(scheduled)}</div>
-        <button class="delete-small" data-action="delete" data-id="${escapeHTML(task.id)}" title="Delete">×</button>
-      </div>
-    `;
-  }).join("");
+function openModal(id) {
+
+    $("#" + id)
+        .classList.remove("hidden");
+
 }
 
-function updateViewVisibility() {
-  $("#dayView").classList.toggle("hidden", state.view !== "day");
-  $("#weekView").classList.toggle("hidden", state.view !== "week");
-  $("#tasksView").classList.toggle("hidden", state.view !== "tasks");
 
-  $$(".nav-btn").forEach(btn => {
-    btn.classList.toggle("active", btn.dataset.view === state.view);
-  });
+function closeModal(id) {
+
+    $("#" + id)
+        .classList.add("hidden");
+
 }
+
 
 function openTaskModal(task = null) {
-  state.editingId = task?.id || null;
-  $("#modalTitle").textContent = task ? "Edit task" : "New task";
-  $("#taskId").value = task?.id || "";
-  $("#taskTitle").value = task?.title || "";
-  $("#taskPriority").value = task?.priority || "medium";
-  $("#taskDeadline").value = task?.deadline || "";
-  $("#taskNotes").value = task?.notes || "";
-  $("#deleteTaskBtn").classList.toggle("hidden", !task);
 
-  const standardDurations = ["15", "30", "45", "60", "90", "120", "180"];
-  const durationValue = String(task?.duration || 30);
-  if (standardDurations.includes(durationValue)) {
-    $("#taskDuration").value = durationValue;
-    $("#customDurationWrap").classList.add("hidden");
-  } else {
-    $("#taskDuration").value = "custom";
-    $("#customDuration").value = task?.duration || 30;
-    $("#customDurationWrap").classList.remove("hidden");
-  }
+    const form =
+        $("#taskForm");
 
-  const scheduled = Boolean(task?.scheduledDate);
-  $("#scheduleNow").checked = scheduled;
-  $("#scheduleFields").classList.toggle("hidden", !scheduled);
-  $("#scheduleDate").value = task?.scheduledDate || dateKey(state.currentDate);
-  $("#scheduleTime").value = task?.startMinutes != null ? timeFromMinutes(task.startMinutes) : "09:00";
+    form.reset();
 
-  $("#taskModal").classList.remove("hidden");
-  setTimeout(() => $("#taskTitle").focus(), 20);
+    $("#editingTaskId").value =
+        "";
+
+    $("#taskModalTitle")
+        .textContent =
+        task
+            ? "Edit Task"
+            : "Add Task";
+
+
+    $("#taskDate").value =
+        task?.date ||
+        dateKey(selectedDate);
+
+
+    $("#taskDeadline").value =
+        task?.deadline || "";
+
+
+    if (task) {
+
+        $("#editingTaskId").value =
+            task.id;
+
+        $("#taskTitle").value =
+            task.title;
+
+        $("#taskDuration").value =
+            task.duration;
+
+        $("#taskPriority").value =
+            task.priority;
+
+        $("#taskProject").value =
+            task.project || "";
+
+        $("#taskNotes").value =
+            task.notes || "";
+
+    }
+
+    openModal("taskModal");
+
+    setTimeout(
+        () => $("#taskTitle").focus(),
+        50
+    );
+
 }
 
-function closeTaskModal() {
-  $("#taskModal").classList.add("hidden");
-  state.editingId = null;
+
+function openBlockModal() {
+
+    $("#blockForm").reset();
+
+    $("#blockDate").value =
+        dateKey(selectedDate);
+
+    openModal("blockModal");
+
 }
 
-function getFormDuration() {
-  const selected = $("#taskDuration").value;
-  if (selected === "custom") {
-    return Math.max(5, Math.min(1440, Number($("#customDuration").value) || 30));
-  }
-  return Number(selected);
+
+function openSearch() {
+
+    $("#searchInput").value =
+        currentSearchTerm;
+
+    renderSearchResults();
+
+    openModal("searchModal");
+
+    setTimeout(
+        () => $("#searchInput").focus(),
+        50
+    );
+
 }
+
+
+function openSettings() {
+
+    $("#workingStart").value =
+        settings.workingStart;
+
+    $("#workingEnd").value =
+        settings.workingEnd;
+
+    openModal("settingsModal");
+
+}
+
+
+/* ============================================================
+   TASK CREATION / EDITING
+============================================================ */
 
 function saveTaskFromForm(event) {
-  event.preventDefault();
 
-  const title = $("#taskTitle").value.trim();
-  if (!title) return;
+    event.preventDefault();
 
-  const schedule = $("#scheduleNow").checked;
-  const scheduledDate = schedule ? $("#scheduleDate").value : null;
-  const startMinutes = schedule ? minutesFromTime($("#scheduleTime").value) : null;
 
-  const data = {
-    title,
-    duration: getFormDuration(),
-    priority: $("#taskPriority").value,
-    deadline: $("#taskDeadline").value,
-    notes: $("#taskNotes").value.trim(),
-    completed: false,
-    scheduledDate,
-    startMinutes
-  };
+    const id =
+        $("#editingTaskId").value;
 
-  if (state.editingId) {
-    const index = state.tasks.findIndex(t => t.id === state.editingId);
-    if (index !== -1) {
-      const old = state.tasks[index];
-      state.tasks[index] = normalizeTask({
-        ...old,
-        ...data,
-        completed: old.completed
-      });
+
+    const taskData = {
+
+        title:
+            $("#taskTitle")
+                .value
+                .trim(),
+
+        duration:
+            Number(
+                $("#taskDuration").value
+            ),
+
+        priority:
+            $("#taskPriority").value,
+
+        date:
+            $("#taskDate").value ||
+            dateKey(selectedDate),
+
+        deadline:
+            $("#taskDeadline").value,
+
+        project:
+            $("#taskProject")
+                .value
+                .trim(),
+
+        notes:
+            $("#taskNotes")
+                .value
+                .trim()
+
+    };
+
+
+    if (!taskData.title) {
+
+        showToast(
+            "Enter a task name."
+        );
+
+        return;
+
     }
-  } else {
-    state.tasks.push(createTask(data));
-  }
 
-  saveTasks();
-  closeTaskModal();
-  render();
-  showToast(state.editingId ? "Task updated" : "Task created");
+
+    if (id) {
+
+        const task =
+            tasks.find(
+                item =>
+                    item.id === id
+            );
+
+        if (!task) return;
+
+
+        task.title =
+            taskData.title;
+
+        task.duration =
+            taskData.duration;
+
+        task.priority =
+            taskData.priority;
+
+        task.date =
+            taskData.date;
+
+        task.deadline =
+            taskData.deadline;
+
+        task.project =
+            taskData.project;
+
+        task.notes =
+            taskData.notes;
+
+
+        showToast(
+            "Task updated."
+        );
+
+    } else {
+
+        tasks.push({
+
+            id:
+                generateId("task"),
+
+            title:
+                taskData.title,
+
+            duration:
+                taskData.duration,
+
+            priority:
+                taskData.priority,
+
+            date:
+                taskData.date,
+
+            deadline:
+                taskData.deadline,
+
+            project:
+                taskData.project,
+
+            notes:
+                taskData.notes,
+
+            completed:
+                false,
+
+            scheduledDate:
+                null,
+
+            startMinutes:
+                null,
+
+            createdAt:
+                Date.now(),
+
+            completedAt:
+                null
+
+        });
+
+
+        showToast(
+            "Task added."
+        );
+
+    }
+
+
+    saveTasks();
+
+    closeModal("taskModal");
+
+    renderApplication();
+
 }
 
-function toggleComplete(id) {
-  const task = state.tasks.find(t => t.id === id);
-  if (!task) return;
-  task.completed = !task.completed;
-  saveTasks();
-  render();
+
+/* ============================================================
+   TASK RENDERING
+============================================================ */
+
+function getTasksForCurrentView() {
+
+    let result = [...tasks];
+
+
+    if (currentView === "today") {
+
+        result =
+            result.filter(
+                task =>
+                    !task.completed &&
+                    (
+                        task.date ===
+                        dateKey(selectedDate)
+                        ||
+                        task.scheduledDate ===
+                        dateKey(selectedDate)
+                    )
+            );
+
+    }
+
+
+    else if (currentView === "inbox") {
+
+        result =
+            result.filter(
+                task =>
+                    !task.completed &&
+                    !task.date
+            );
+
+    }
+
+
+    else if (currentView === "upcoming") {
+
+        const today =
+            dateKey(new Date());
+
+        result =
+            result.filter(
+                task =>
+                    !task.completed &&
+                    task.date &&
+                    task.date >= today
+            );
+
+    }
+
+
+    else if (currentView === "completed") {
+
+        result =
+            result.filter(
+                task =>
+                    task.completed
+            );
+
+    }
+
+
+    return result;
+
 }
+
+
+function applyTaskFilters(result) {
+
+    const priority =
+        $("#priorityFilter").value;
+
+    const schedule =
+        $("#scheduleFilter").value;
+
+
+    if (priority !== "all") {
+
+        result =
+            result.filter(
+                task =>
+                    task.priority === priority
+            );
+
+    }
+
+
+    if (schedule === "scheduled") {
+
+        result =
+            result.filter(
+                task =>
+                    task.scheduledDate
+            );
+
+    }
+
+
+    if (schedule === "unscheduled") {
+
+        result =
+            result.filter(
+                task =>
+                    !task.scheduledDate
+            );
+
+    }
+
+
+    return result;
+
+}
+
+
+function renderTasks() {
+
+    const container =
+        $("#taskList");
+
+    let visible =
+        getTasksForCurrentView();
+
+
+    visible =
+        applyTaskFilters(visible);
+
+
+    visible.sort(
+        sortTasks
+    );
+
+
+    container.innerHTML =
+        "";
+
+
+    if (!visible.length) {
+
+        container.innerHTML = `
+
+            <div class="empty-state">
+
+                <div>
+
+                    <div class="empty-state-icon">
+                        ✓
+                    </div>
+
+                    <h3>
+                        Nothing here
+                    </h3>
+
+                    <p>
+                        Add a task or change your filters.
+                    </p>
+
+                </div>
+
+            </div>
+
+        `;
+
+        updateTaskPanelSubtitle(0);
+
+        return;
+
+    }
+
+
+    visible.forEach(
+        task =>
+            container.appendChild(
+                createTaskElement(task)
+            )
+    );
+
+
+    updateTaskPanelSubtitle(
+        visible.length
+    );
+
+}
+
+
+function sortTasks(a, b) {
+
+    if (
+        a.completed !==
+        b.completed
+    ) {
+
+        return a.completed
+            ? 1
+            : -1;
+
+    }
+
+
+    const priorityDifference =
+        priorityScore(b.priority) -
+        priorityScore(a.priority);
+
+
+    if (priorityDifference !== 0) {
+
+        return priorityDifference;
+
+    }
+
+
+    if (
+        a.deadline &&
+        b.deadline
+    ) {
+
+        return a.deadline
+            .localeCompare(b.deadline);
+
+    }
+
+
+    if (a.deadline) return -1;
+
+    if (b.deadline) return 1;
+
+
+    return (
+        (a.createdAt || 0) -
+        (b.createdAt || 0)
+    );
+
+}
+
+
+function priorityScore(priority) {
+
+    if (priority === "high") return 3;
+
+    if (priority === "medium") return 2;
+
+    return 1;
+
+}
+
+
+function createTaskElement(task) {
+
+    const item =
+        document.createElement("article");
+
+    item.className =
+        "task-item" +
+        (
+            task.completed
+                ? " completed"
+                : ""
+        );
+
+
+    const scheduledLabel =
+        task.scheduledDate
+            ? formatTime(
+                task.startMinutes
+            )
+            : "Unscheduled";
+
+
+    item.innerHTML = `
+
+        <div class="task-main">
+
+            <button
+                class="task-checkbox ${
+                    task.completed
+                        ? "checked"
+                        : ""
+                }"
+                data-action="complete"
+                data-id="${task.id}"
+                aria-label="Complete task">
+            </button>
+
+
+            <div
+                class="task-information"
+                data-action="edit"
+                data-id="${task.id}">
+
+                <div class="task-title">
+                    ${escapeHTML(task.title)}
+                </div>
+
+
+                <div class="task-meta">
+
+                    <span class="task-tag">
+                        ${formatDuration(
+                            task.duration
+                        )}
+                    </span>
+
+
+                    <span class="task-tag priority-${task.priority}">
+                        ${capitalize(
+                            task.priority
+                        )}
+                    </span>
+
+
+                    <span class="task-tag">
+                        ${escapeHTML(
+                            scheduledLabel
+                        )}
+                    </span>
+
+
+                    ${
+                        task.deadline
+                            ? `
+                                <span class="task-tag">
+                                    Due ${
+                                        formatShortDate(
+                                            task.deadline
+                                        )
+                                    }
+                                </span>
+                            `
+                            : ""
+                    }
+
+
+                    ${
+                        task.project
+                            ? `
+                                <span class="task-tag">
+                                    ${
+                                        escapeHTML(
+                                            task.project
+                                        )
+                                    }
+                                </span>
+                            `
+                            : ""
+                    }
+
+                </div>
+
+            </div>
+
+        </div>
+
+
+        <div class="task-actions">
+
+            <button
+                class="task-action"
+                data-action="edit"
+                data-id="${task.id}">
+                ✎
+            </button>
+
+            <button
+                class="task-action delete"
+                data-action="delete"
+                data-id="${task.id}">
+                ×
+            </button>
+
+        </div>
+
+    `;
+
+
+    item.addEventListener(
+        "click",
+        handleTaskClick
+    );
+
+
+    item.draggable = true;
+
+
+    item.addEventListener(
+        "dragstart",
+        event => {
+
+            draggedItem = {
+
+                type: "task",
+
+                id: task.id
+
+            };
+
+
+            event.dataTransfer.effectAllowed =
+                "move";
+
+        }
+    );
+
+
+    return item;
+
+}
+
+
+function handleTaskClick(event) {
+
+    const target =
+        event.target.closest(
+            "[data-action]"
+        );
+
+
+    if (!target) return;
+
+
+    const action =
+        target.dataset.action;
+
+    const id =
+        target.dataset.id;
+
+
+    if (action === "complete") {
+
+        toggleTaskCompletion(id);
+
+    }
+
+
+    else if (action === "edit") {
+
+        const task =
+            tasks.find(
+                item =>
+                    item.id === id
+            );
+
+        if (task) {
+
+            openTaskModal(task);
+
+        }
+
+    }
+
+
+    else if (action === "delete") {
+
+        deleteTask(id);
+
+    }
+
+}
+
+
+/* ============================================================
+   TASK ACTIONS
+============================================================ */
+
+function toggleTaskCompletion(id) {
+
+    const task =
+        tasks.find(
+            item =>
+                item.id === id
+        );
+
+
+    if (!task) return;
+
+
+    task.completed =
+        !task.completed;
+
+
+    task.completedAt =
+        task.completed
+            ? Date.now()
+            : null;
+
+
+    saveTasks();
+
+    renderApplication();
+
+
+    showToast(
+        task.completed
+            ? "Task completed."
+            : "Task reopened."
+    );
+
+}
+
 
 function deleteTask(id) {
-  const task = state.tasks.find(t => t.id === id);
-  if (!task) return;
-  if (!confirm(`Delete "${task.title}"?`)) return;
 
-  state.tasks = state.tasks.filter(t => t.id !== id);
-  saveTasks();
-  render();
-  showToast("Task deleted");
+    const task =
+        tasks.find(
+            item =>
+                item.id === id
+        );
+
+
+    if (!task) return;
+
+
+    const confirmed =
+        confirm(
+            `Delete "${task.title}"?`
+        );
+
+
+    if (!confirmed) return;
+
+
+    tasks =
+        tasks.filter(
+            item =>
+                item.id !== id
+        );
+
+
+    saveTasks();
+
+    renderApplication();
+
+    showToast(
+        "Task deleted."
+    );
+
 }
 
-function clearCompleted() {
-  const count = state.tasks.filter(t => t.completed).length;
-  if (!count) return;
-  if (!confirm(`Delete ${count} completed task${count === 1 ? "" : "s"}?`)) return;
 
-  state.tasks = state.tasks.filter(t => !t.completed);
-  saveTasks();
-  render();
-  showToast("Completed tasks cleared");
+/* ============================================================
+   CALENDAR RENDERING
+============================================================ */
+
+function renderCalendar() {
+
+    renderTimeLabels();
+
+    renderGridLines();
+
+    renderCalendarBlocks();
+
+    updateCurrentTimeLine();
+
 }
 
-function findFreeSlot(date, duration, preferredStart = 9 * 60) {
-  const dayKey = dateKey(date);
-  const busy = tasksForDate(dayKey)
-    .filter(t => t.startMinutes != null)
-    .map(t => ({
-      start: t.startMinutes,
-      end: t.startMinutes + t.duration
-    }))
-    .sort((a, b) => a.start - b.start);
 
-  const workStart = Math.max(7 * 60, preferredStart);
-  const workEnd = 22 * 60;
+function renderTimeLabels() {
 
-  let candidate = workStart;
+    const labels =
+        $("#timeLabels");
 
-  for (const block of busy) {
-    if (candidate + duration <= block.start && candidate + duration <= workEnd) {
-      return candidate;
+    labels.innerHTML =
+        "";
+
+
+    for (
+        let hour = 0;
+        hour < 24;
+        hour++
+    ) {
+
+        const element =
+            document.createElement("div");
+
+        element.className =
+            "time-label";
+
+
+        element.innerHTML = `
+
+            <span>
+                ${formatTime(hour * 60)}
+            </span>
+
+        `;
+
+
+        labels.appendChild(
+            element
+        );
+
     }
-    if (block.end > candidate) candidate = block.end;
-  }
 
-  return candidate + duration <= workEnd ? candidate : null;
 }
+
+
+function renderGridLines() {
+
+    const grid =
+        $("#calendarGridLines");
+
+    grid.innerHTML =
+        "";
+
+
+    for (
+        let hour = 0;
+        hour <= 24;
+        hour++
+    ) {
+
+        const line =
+            document.createElement("div");
+
+        line.className =
+            "calendar-hour-line";
+
+        line.style.top =
+            `${hour * 60}px`;
+
+        grid.appendChild(line);
+
+
+        if (hour < 24) {
+
+            const half =
+                document.createElement("div");
+
+            half.className =
+                "calendar-half-line";
+
+            half.style.top =
+                `${hour * 60 + 30}px`;
+
+            grid.appendChild(half);
+
+        }
+
+    }
+
+}
+
+
+function renderCalendarBlocks() {
+
+    const container =
+        $("#calendarBlocks");
+
+    container.innerHTML =
+        "";
+
+
+    if (calendarView === "day") {
+
+        renderDayBlocks(
+            container,
+            selectedDate
+        );
+
+    }
+
+    else {
+
+        renderWeekBlocks(
+            container
+        );
+
+    }
+
+}
+
+
+function renderDayBlocks(
+    container,
+    date
+) {
+
+    const key =
+        dateKey(date);
+
+
+    const dayTasks =
+        tasks.filter(
+            task =>
+                task.scheduledDate === key &&
+                task.startMinutes !== null
+        );
+
+
+    dayTasks.forEach(
+        task =>
+            container.appendChild(
+                createCalendarTaskBlock(task)
+            )
+    );
+
+
+    const blocks =
+        manualBlocks.filter(
+            block =>
+                block.date === key
+        );
+
+
+    blocks.forEach(
+        block =>
+            container.appendChild(
+                createManualBlockElement(block)
+            )
+    );
+
+}
+
+
+function renderWeekBlocks(container) {
+
+    /*
+        The full weekly data remains stored
+        in the same data model. For the compact
+        interface, blocks are shown according
+        to the selected week.
+    */
+
+    const start =
+        startOfWeek(selectedDate);
+
+
+    for (
+        let i = 0;
+        i < 7;
+        i++
+    ) {
+
+        const date =
+            new Date(start);
+
+        date.setDate(
+            start.getDate() + i
+        );
+
+
+        const key =
+            dateKey(date);
+
+
+        const dayTasks =
+            tasks.filter(
+                task =>
+                    task.scheduledDate === key
+            );
+
+
+        dayTasks.forEach(
+            task => {
+
+                const block =
+                    createCalendarTaskBlock(
+                        task
+                    );
+
+
+                const columnWidth =
+                    100 / 7;
+
+
+                block.style.width =
+                    `calc(${columnWidth}% - 10px)`;
+
+
+                block.style.left =
+                    `calc(${i * columnWidth}% + 5px)`;
+
+
+                container.appendChild(
+                    block
+                );
+
+            }
+        );
+
+    }
+
+}
+
+
+function createCalendarTaskBlock(task) {
+
+    const block =
+        document.createElement("div");
+
+
+    block.className =
+        "calendar-block task-" +
+        task.priority +
+        (
+            task.completed
+                ? " completed"
+                : ""
+        );
+
+
+    block.style.top =
+        `${task.startMinutes}px`;
+
+
+    block.style.height =
+        `${Math.max(
+            task.duration,
+            25
+        )}px`;
+
+
+    block.dataset.id =
+        task.id;
+
+
+    block.dataset.type =
+        "task";
+
+
+    block.draggable =
+        true;
+
+
+    block.innerHTML = `
+
+        <div class="calendar-block-title">
+            ${escapeHTML(
+                task.title
+            )}
+        </div>
+
+        <div class="calendar-block-time">
+            ${formatTime(
+                task.startMinutes
+            )}
+            –
+            ${formatTime(
+                task.startMinutes +
+                task.duration
+            )}
+        </div>
+
+        <button
+            class="calendar-block-delete"
+            title="Remove from schedule">
+            ×
+        </button>
+
+    `;
+
+
+    block.addEventListener(
+        "dragstart",
+        event => {
+
+            draggedItem = {
+
+                type: "task",
+
+                id: task.id
+
+            };
+
+
+            event.dataTransfer.effectAllowed =
+                "move";
+
+        }
+    );
+
+
+    block.addEventListener(
+        "click",
+        event => {
+
+            if (
+                event.target.closest(
+                    ".calendar-block-delete"
+                )
+            ) {
+
+                event.stopPropagation();
+
+                unscheduleTask(
+                    task.id
+                );
+
+                return;
+
+            }
+
+
+            openTaskModal(task);
+
+        }
+    );
+
+
+    return block;
+
+}
+
+
+function createManualBlockElement(blockData) {
+
+    const block =
+        document.createElement("div");
+
+
+    block.className =
+        "calendar-block manual";
+
+
+    block.style.top =
+        `${blockData.startMinutes}px`;
+
+
+    block.style.height =
+        `${Math.max(
+            blockData.duration,
+            25
+        )}px`;
+
+
+    block.dataset.id =
+        blockData.id;
+
+
+    block.dataset.type =
+        "manual";
+
+
+    block.draggable =
+        true;
+
+
+    block.innerHTML = `
+
+        <div class="calendar-block-title">
+            ${escapeHTML(
+                blockData.title
+            )}
+        </div>
+
+        <div class="calendar-block-time">
+            ${formatTime(
+                blockData.startMinutes
+            )}
+            –
+            ${formatTime(
+                blockData.startMinutes +
+                blockData.duration
+            )}
+        </div>
+
+        <button
+            class="calendar-block-delete">
+            ×
+        </button>
+
+    `;
+
+
+    block.addEventListener(
+        "dragstart",
+        event => {
+
+            draggedItem = {
+
+                type: "manual",
+
+                id: blockData.id
+
+            };
+
+
+            event.dataTransfer.effectAllowed =
+                "move";
+
+        }
+    );
+
+
+    block.addEventListener(
+        "click",
+        event => {
+
+            if (
+                event.target.closest(
+                    ".calendar-block-delete"
+                )
+            ) {
+
+                event.stopPropagation();
+
+                deleteManualBlock(
+                    blockData.id
+                );
+
+            }
+
+        }
+    );
+
+
+    return block;
+
+}
+
+
+/* ============================================================
+   CALENDAR DRAG/DROP
+============================================================ */
+
+function initializeCalendarDrop() {
+
+    const timeline =
+        $("#calendarTimeline");
+
+
+    timeline.addEventListener(
+        "dragover",
+        event => {
+
+            event.preventDefault();
+
+            timeline.classList.add(
+                "drag-over"
+            );
+
+        }
+    );
+
+
+    timeline.addEventListener(
+        "dragleave",
+        () => {
+
+            timeline.classList.remove(
+                "drag-over"
+            );
+
+        }
+    );
+
+
+    timeline.addEventListener(
+        "drop",
+        event => {
+
+            event.preventDefault();
+
+            timeline.classList.remove(
+                "drag-over"
+            );
+
+
+            if (!draggedItem) return;
+
+
+            const rect =
+                timeline.getBoundingClientRect();
+
+
+            let minutes =
+                event.clientY -
+                rect.top +
+                timeline.scrollTop;
+
+
+            minutes =
+                snapTo15Minutes(
+                    minutes
+                );
+
+
+            minutes =
+                clamp(
+                    minutes,
+                    0,
+                    1439
+                );
+
+
+            if (
+                draggedItem.type ===
+                "task"
+            ) {
+
+                moveTaskToSchedule(
+                    draggedItem.id,
+                    dateKey(selectedDate),
+                    minutes
+                );
+
+            }
+
+
+            if (
+                draggedItem.type ===
+                "manual"
+            ) {
+
+                moveManualBlock(
+                    draggedItem.id,
+                    dateKey(selectedDate),
+                    minutes
+                );
+
+            }
+
+
+            draggedItem = null;
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   CALENDAR INITIAL DROP LISTENER
+============================================================ */
+
+initializeCalendarDrop();
+
+
+/* ============================================================
+   SCHEDULE OPERATIONS
+============================================================ */
+
+function moveTaskToSchedule(
+    id,
+    date,
+    minutes
+) {
+
+    const task =
+        tasks.find(
+            item =>
+                item.id === id
+        );
+
+
+    if (!task) return;
+
+
+    const collision =
+        findCollision(
+            date,
+            minutes,
+            task.duration,
+            id
+        );
+
+
+    if (collision) {
+
+        showToast(
+            "That time overlaps another block."
+        );
+
+        return;
+
+    }
+
+
+    task.scheduledDate =
+        date;
+
+    task.startMinutes =
+        minutes;
+
+
+    saveTasks();
+
+    renderApplication();
+
+    showToast(
+        "Task scheduled."
+    );
+
+}
+
+
+function unscheduleTask(id) {
+
+    const task =
+        tasks.find(
+            item =>
+                item.id === id
+        );
+
+
+    if (!task) return;
+
+
+    task.scheduledDate =
+        null;
+
+    task.startMinutes =
+        null;
+
+
+    saveTasks();
+
+    renderApplication();
+
+    showToast(
+        "Task removed from calendar."
+    );
+
+}
+
+
+function moveManualBlock(
+    id,
+    date,
+    minutes
+) {
+
+    const block =
+        manualBlocks.find(
+            item =>
+                item.id === id
+        );
+
+
+    if (!block) return;
+
+
+    const collision =
+        findCollision(
+            date,
+            minutes,
+            block.duration,
+            null,
+            id
+        );
+
+
+    if (collision) {
+
+        showToast(
+            "That time overlaps another block."
+        );
+
+        return;
+
+    }
+
+
+    block.date =
+        date;
+
+    block.startMinutes =
+        minutes;
+
+
+    saveBlocks();
+
+    renderApplication();
+
+}
+
+
+/* ============================================================
+   COLLISION DETECTION
+============================================================ */
+
+function findCollision(
+    date,
+    start,
+    duration,
+    ignoreTaskId = null,
+    ignoreBlockId = null
+) {
+
+    const end =
+        start + duration;
+
+
+    for (const task of tasks) {
+
+        if (
+            task.scheduledDate !== date ||
+            task.startMinutes === null ||
+            task.id === ignoreTaskId
+        ) {
+
+            continue;
+
+        }
+
+
+        const taskEnd =
+            task.startMinutes +
+            task.duration;
+
+
+        if (
+            start < taskEnd &&
+            end > task.startMinutes
+        ) {
+
+            return task;
+
+        }
+
+    }
+
+
+    for (const block of manualBlocks) {
+
+        if (
+            block.date !== date ||
+            block.id === ignoreBlockId
+        ) {
+
+            continue;
+
+        }
+
+
+        const blockEnd =
+            block.startMinutes +
+            block.duration;
+
+
+        if (
+            start < blockEnd &&
+            end > block.startMinutes
+        ) {
+
+            return block;
+
+        }
+
+    }
+
+
+    return null;
+
+}
+
+
+/* ============================================================
+   AUTO PLANNER
+============================================================ */
 
 function autoPlan() {
-  const unscheduled = state.tasks
-    .filter(t => !t.completed && !t.scheduledDate)
-    .sort((a, b) => {
-      const p = { high: 0, medium: 1, low: 2 };
-      if (p[a.priority] !== p[b.priority]) return p[a.priority] - p[b.priority];
-      if (a.deadline && b.deadline) return a.deadline.localeCompare(b.deadline);
-      if (a.deadline) return -1;
-      if (b.deadline) return 1;
-      return a.createdAt - b.createdAt;
-    });
 
-  let planned = 0;
-  let date = startOfDay(state.currentDate);
+    const date =
+        dateKey(selectedDate);
 
-  for (const task of unscheduled) {
-    let placed = false;
 
-    for (let offset = 0; offset < 14; offset++) {
-      const target = addDays(date, offset);
-      if (task.deadline && dateKey(target) > task.deadline) break;
+    const unscheduled =
+        tasks
+        .filter(
+            task =>
+                !task.completed &&
+                !task.scheduledDate
+        )
+        .sort(
+            autoPlanSort
+        );
 
-      const slot = findFreeSlot(target, task.duration, 9 * 60);
-      if (slot != null) {
-        task.scheduledDate = dateKey(target);
-        task.startMinutes = slot;
-        planned++;
-        placed = true;
-        break;
-      }
+
+    if (!unscheduled.length) {
+
+        showToast(
+            "There are no unscheduled tasks."
+        );
+
+        return;
+
     }
 
-    if (!placed) break;
-  }
 
-  saveTasks();
-  render();
+    const existing =
+        getScheduleItems(date);
 
-  if (planned) {
-    showToast(`${planned} task${planned === 1 ? "" : "s"} scheduled`);
-  } else {
-    showToast("No free slots found");
-  }
+
+    const slots =
+        generateFreeSlots(
+            date,
+            existing
+        );
+
+
+    let plannedCount = 0;
+
+
+    for (
+        const task of unscheduled
+    ) {
+
+        const slot =
+            findSlotForTask(
+                task,
+                slots
+            );
+
+
+        if (!slot) {
+
+            continue;
+
+        }
+
+
+        task.scheduledDate =
+            date;
+
+        task.startMinutes =
+            slot.start;
+
+
+        slot.start +=
+            task.duration;
+
+        slot.duration -=
+            task.duration;
+
+
+        plannedCount++;
+
+    }
+
+
+    saveTasks();
+
+    renderApplication();
+
+
+    if (plannedCount) {
+
+        showToast(
+            `${plannedCount} task${
+                plannedCount === 1
+                    ? ""
+                    : "s"
+            } planned.`
+        );
+
+    } else {
+
+        showToast(
+            "No free time was large enough."
+        );
+
+    }
+
 }
 
-function autoPlanWeek() {
-  autoPlan();
+
+function autoPlanSort(a, b) {
+
+    /*
+        Priority first.
+        Earlier deadline second.
+        Longer tasks third.
+    */
+
+    const priorityDifference =
+        priorityScore(b.priority) -
+        priorityScore(a.priority);
+
+
+    if (priorityDifference !== 0) {
+
+        return priorityDifference;
+
+    }
+
+
+    if (
+        a.deadline &&
+        b.deadline
+    ) {
+
+        const deadlineDifference =
+            a.deadline.localeCompare(
+                b.deadline
+            );
+
+
+        if (
+            deadlineDifference !== 0
+        ) {
+
+            return deadlineDifference;
+
+        }
+
+    }
+
+
+    if (a.deadline) return -1;
+
+    if (b.deadline) return 1;
+
+
+    return b.duration -
+        a.duration;
+
 }
 
-function scheduleTaskAt(task, date, minutes) {
-  const slot = findFreeSlot(date, task.duration, minutes);
-  if (slot == null) {
-    showToast("Not enough free time in this day");
-    return;
-  }
 
-  task.scheduledDate = dateKey(date);
-  task.startMinutes = slot;
-  saveTasks();
-  render();
-  showToast("Task scheduled");
+function getScheduleItems(date) {
+
+    const items = [];
+
+
+    tasks.forEach(task => {
+
+        if (
+            task.scheduledDate === date &&
+            task.startMinutes !== null
+        ) {
+
+            items.push({
+
+                type: "task",
+
+                id: task.id,
+
+                start:
+                    task.startMinutes,
+
+                duration:
+                    task.duration
+
+            });
+
+        }
+
+    });
+
+
+    manualBlocks.forEach(block => {
+
+        if (
+            block.date === date
+        ) {
+
+            items.push({
+
+                type: "manual",
+
+                id: block.id,
+
+                start:
+                    block.startMinutes,
+
+                duration:
+                    block.duration
+
+            });
+
+        }
+
+    });
+
+
+    return items.sort(
+        (a,b) =>
+            a.start -
+            b.start
+    );
+
 }
 
-function handleTimelineClick(event) {
-  if (event.target.closest(".calendar-task")) {
-    const id = event.target.closest(".calendar-task").dataset.taskId;
-    const task = state.tasks.find(t => t.id === id);
-    if (task) openTaskModal(task);
-    return;
-  }
 
-  const rect = $("#timeline").getBoundingClientRect();
-  const y = event.clientY - rect.top + $("#timeline").scrollTop;
-  const minutes = Math.floor((y / 64) * 60 / 15) * 15;
+function generateFreeSlots(
+    date,
+    existing
+) {
 
-  const unscheduled = state.tasks
-    .filter(t => !t.completed && !t.scheduledDate)
-    .sort((a, b) => a.createdAt - b.createdAt);
+    const dayStart =
+        timeToMinutes(
+            settings.workingStart
+        );
 
-  if (!unscheduled.length) {
-    openTaskModal();
-    $("#scheduleNow").checked = true;
-    $("#scheduleFields").classList.remove("hidden");
-    $("#scheduleDate").value = dateKey(state.currentDate);
-    $("#scheduleTime").value = timeFromMinutes(minutes);
-    return;
-  }
 
-  const task = unscheduled[0];
-  scheduleTaskAt(task, state.currentDate, Math.max(0, Math.min(23 * 60, minutes)));
+    const dayEnd =
+        timeToMinutes(
+            settings.workingEnd
+        );
+
+
+    const slots = [];
+
+
+    let cursor =
+        dayStart;
+
+
+    const sorted =
+        [...existing].sort(
+            (a,b) =>
+                a.start -
+                b.start
+        );
+
+
+    sorted.forEach(item => {
+
+        const itemEnd =
+            item.start +
+            item.duration;
+
+
+        if (
+            item.start > cursor
+        ) {
+
+            slots.push({
+
+                start:
+                    cursor,
+
+                duration:
+                    item.start -
+                    cursor
+
+            });
+
+        }
+
+
+        cursor =
+            Math.max(
+                cursor,
+                itemEnd
+            );
+
+    });
+
+
+    if (
+        cursor < dayEnd
+    ) {
+
+        slots.push({
+
+            start:
+                cursor,
+
+            duration:
+                dayEnd -
+                cursor
+
+        });
+
+    }
+
+
+    return slots;
+
 }
 
-function showToast(message) {
-  const toast = $("#toast");
-  toast.textContent = message;
-  toast.classList.remove("hidden");
-  clearTimeout(showToast.timer);
-  showToast.timer = setTimeout(() => toast.classList.add("hidden"), 2200);
+
+function findSlotForTask(
+    task,
+    slots
+) {
+
+    /*
+        Prefer the earliest slot that
+        completely fits the task.
+    */
+
+    for (
+        const slot of slots
+    ) {
+
+        if (
+            slot.duration >=
+            task.duration
+        ) {
+
+            return slot;
+
+        }
+
+    }
+
+
+    return null;
+
 }
 
-function setView(view) {
-  state.view = view;
-  render();
+
+/* ============================================================
+   CLEAR SCHEDULE
+============================================================ */
+
+function clearSchedule() {
+
+    const date =
+        dateKey(selectedDate);
+
+
+    const scheduledTasks =
+        tasks.filter(
+            task =>
+                task.scheduledDate === date
+        );
+
+
+    const scheduledBlocks =
+        manualBlocks.filter(
+            block =>
+                block.date === date
+        );
+
+
+    if (
+        !scheduledTasks.length &&
+        !scheduledBlocks.length
+    ) {
+
+        showToast(
+            "Nothing is scheduled."
+        );
+
+        return;
+
+    }
+
+
+    if (
+        !confirm(
+            "Remove today's calendar blocks?"
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    scheduledTasks.forEach(
+        task => {
+
+            task.scheduledDate =
+                null;
+
+            task.startMinutes =
+                null;
+
+        }
+    );
+
+
+    manualBlocks =
+        manualBlocks.filter(
+            block =>
+                block.date !== date
+        );
+
+
+    saveTasks();
+
+    saveBlocks();
+
+    renderApplication();
+
+    showToast(
+        "Schedule cleared."
+    );
+
 }
 
-function initTheme() {
-  const saved = localStorage.getItem(THEME_KEY);
-  if (saved === "dark") document.body.classList.add("dark");
+
+/* ============================================================
+   MANUAL BLOCK
+============================================================ */
+
+function saveBlockFromForm(event) {
+
+    event.preventDefault();
+
+
+    const title =
+        $("#blockTitle")
+            .value
+            .trim();
+
+
+    const date =
+        $("#blockDate").value;
+
+
+    const start =
+        timeToMinutes(
+            $("#blockStart").value
+        );
+
+
+    const duration =
+        Number(
+            $("#blockDuration").value
+        );
+
+
+    if (!title || !date) {
+
+        return;
+
+    }
+
+
+    if (
+        findCollision(
+            date,
+            start,
+            duration
+        )
+    ) {
+
+        showToast(
+            "That block overlaps another event."
+        );
+
+        return;
+
+    }
+
+
+    manualBlocks.push({
+
+        id:
+            generateId("block"),
+
+        title,
+
+        date,
+
+        startMinutes:
+            start,
+
+        duration,
+
+        createdAt:
+            Date.now()
+
+    });
+
+
+    saveBlocks();
+
+    closeModal("blockModal");
+
+    renderApplication();
+
+    showToast(
+        "Time block added."
+    );
+
 }
+
+
+function deleteManualBlock(id) {
+
+    if (
+        !confirm(
+            "Delete this time block?"
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    manualBlocks =
+        manualBlocks.filter(
+            block =>
+                block.id !== id
+        );
+
+
+    saveBlocks();
+
+    renderApplication();
+
+}
+
+
+/* ============================================================
+   DATE NAVIGATION
+============================================================ */
+
+function changeDate(amount) {
+
+    const newDate =
+        new Date(selectedDate);
+
+
+    newDate.setDate(
+        newDate.getDate() +
+        amount
+    );
+
+
+    selectedDate =
+        newDate;
+
+
+    renderApplication();
+
+}
+
+
+function goToday() {
+
+    selectedDate =
+        new Date();
+
+
+    renderApplication();
+
+}
+
+
+/* ============================================================
+   CURRENT TIME
+============================================================ */
+
+function updateCurrentTimeLine() {
+
+    const line =
+        $("#currentTimeLine");
+
+
+    if (
+        !isToday(selectedDate) ||
+        calendarView !== "day"
+    ) {
+
+        line.classList.add(
+            "hidden"
+        );
+
+        return;
+
+    }
+
+
+    const now =
+        new Date();
+
+
+    const minutes =
+        now.getHours() * 60 +
+        now.getMinutes();
+
+
+    line.style.top =
+        `${minutes}px`;
+
+
+    line.classList.remove(
+        "hidden"
+    );
+
+}
+
+
+/* ============================================================
+   SEARCH
+============================================================ */
+
+function renderSearchResults() {
+
+    currentSearchTerm =
+        $("#searchInput")
+            .value
+            .trim()
+            .toLowerCase();
+
+
+    const results =
+        $("#searchResults");
+
+
+    if (!currentSearchTerm) {
+
+        results.innerHTML = `
+
+            <div class="empty-state">
+
+                <div>
+
+                    <div class="empty-state-icon">
+                        ⌕
+                    </div>
+
+                    <p>
+                        Start typing to search.
+                    </p>
+
+                </div>
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    const matches =
+        tasks.filter(
+            task =>
+                task.title
+                    .toLowerCase()
+                    .includes(
+                        currentSearchTerm
+                    )
+                ||
+                (
+                    task.project || ""
+                )
+                    .toLowerCase()
+                    .includes(
+                        currentSearchTerm
+                    )
+        );
+
+
+    results.innerHTML =
+        "";
+
+
+    if (!matches.length) {
+
+        results.innerHTML = `
+
+            <div class="empty-state">
+
+                <div>
+
+                    <h3>
+                        No results
+                    </h3>
+
+                    <p>
+                        No task matches your search.
+                    </p>
+
+                </div>
+
+            </div>
+
+        `;
+
+        return;
+
+    }
+
+
+    matches.forEach(task => {
+
+        const item =
+            document.createElement("div");
+
+
+        item.className =
+            "search-result";
+
+
+        item.innerHTML = `
+
+            <div class="search-result-title">
+                ${escapeHTML(
+                    task.title
+                )}
+            </div>
+
+            <div class="search-result-meta">
+
+                ${formatDuration(
+                    task.duration
+                )}
+
+                ·
+
+                ${capitalize(
+                    task.priority
+                )}
+
+                ·
+
+                ${
+                    task.completed
+                        ? "Completed"
+                        : "Active"
+                }
+
+            </div>
+
+        `;
+
+
+        item.addEventListener(
+            "click",
+            () => {
+
+                closeModal(
+                    "searchModal"
+                );
+
+                openTaskModal(task);
+
+            }
+        );
+
+
+        results.appendChild(
+            item
+        );
+
+    });
+
+}
+
+
+/* ============================================================
+   FILTERS
+============================================================ */
+
+function toggleFilters() {
+
+    $("#filterBar")
+        .classList.toggle(
+            "hidden"
+        );
+
+}
+
+
+/* ============================================================
+   THEME
+============================================================ */
+
+function initializeTheme() {
+
+    const theme =
+        localStorage.getItem(
+            STORAGE_KEYS.THEME
+        );
+
+
+    if (theme === "dark") {
+
+        document.body.classList.add(
+            "dark"
+        );
+
+    }
+
+}
+
 
 function toggleTheme() {
-  document.body.classList.toggle("dark");
-  localStorage.setItem(
-    THEME_KEY,
-    document.body.classList.contains("dark") ? "dark" : "light"
-  );
+
+    const dark =
+        document.body.classList.toggle(
+            "dark"
+        );
+
+
+    localStorage.setItem(
+        STORAGE_KEYS.THEME,
+        dark
+            ? "dark"
+            : "light"
+    );
+
+
+    $("#themeButton")
+        .querySelector("span:last-child")
+        .textContent =
+            dark
+                ? "Light Mode"
+                : "Dark Mode";
+
 }
 
-function bindEvents() {
-  $("#newTaskBtn").addEventListener("click", () => openTaskModal());
-  $("#quickAddBtn").addEventListener("click", () => openTaskModal());
-  $("#closeModalBtn").addEventListener("click", closeTaskModal);
-  $("#cancelTaskBtn").addEventListener("click", closeTaskModal);
-  $("#taskForm").addEventListener("submit", saveTaskFromForm);
-  $("#themeBtn").addEventListener("click", toggleTheme);
-  $("#todayBtn").addEventListener("click", () => {
-    state.currentDate = startOfDay(new Date());
-    render();
-  });
 
-  $("#prevDayBtn").addEventListener("click", () => {
-    state.currentDate = addDays(state.currentDate, -1);
-    render();
-  });
+/* ============================================================
+   SETTINGS
+============================================================ */
 
-  $("#nextDayBtn").addEventListener("click", () => {
-    state.currentDate = addDays(state.currentDate, 1);
-    render();
-  });
+function initializeSettings() {
 
-  $("#prevWeekBtn").addEventListener("click", () => {
-    state.currentDate = addDays(state.currentDate, -7);
-    render();
-  });
+    if (!settings.workingStart) {
 
-  $("#nextWeekBtn").addEventListener("click", () => {
-    state.currentDate = addDays(state.currentDate, 7);
-    render();
-  });
+        settings =
+            {
+                ...DEFAULT_SETTINGS
+            };
 
-  $("#autoPlanBtn").addEventListener("click", autoPlan);
-  $("#weekAutoPlanBtn").addEventListener("click", autoPlanWeek);
-  $("#tasksAutoPlanBtn").addEventListener("click", autoPlan);
-  $("#clearCompletedBtn").addEventListener("click", clearCompleted);
-
-  $("#taskDuration").addEventListener("change", () => {
-    $("#customDurationWrap").classList.toggle(
-      "hidden",
-      $("#taskDuration").value !== "custom"
-    );
-  });
-
-  $("#scheduleNow").addEventListener("change", () => {
-    $("#scheduleFields").classList.toggle("hidden", !$("#scheduleNow").checked);
-  });
-
-  $$(".nav-btn").forEach(button => {
-    button.addEventListener("click", () => setView(button.dataset.view));
-  });
-
-  $$(".filter-btn").forEach(button => {
-    button.addEventListener("click", () => {
-      state.filter = button.dataset.filter;
-      render();
-    });
-  });
-
-  $("#timeline").addEventListener("click", handleTimelineClick);
-
-  $("#taskList").addEventListener("click", event => {
-    const complete = event.target.closest('[data-action="complete"]');
-    if (complete) {
-      event.stopPropagation();
-      toggleComplete(complete.dataset.id);
-      return;
     }
 
-    const card = event.target.closest(".task-card");
-    if (card) {
-      const task = state.tasks.find(t => t.id === card.dataset.taskId);
- 
+
+    $("#workingStart").value =
+        settings.workingStart;
+
+
+    $("#workingEnd").value =
+        settings.workingEnd;
+
+}
+
+
+function saveWorkingHours() {
+
+    const start =
+        $("#workingStart").value;
+
+
+    const end =
+        $("#workingEnd").value;
+
+
+    if (
+        timeToMinutes(start) >=
+        timeToMinutes(end)
+    ) {
+
+        showToast(
+            "End time must be later than start time."
+        );
+
+        return;
+
+    }
+
+
+    settings.workingStart =
+        start;
+
+    settings.workingEnd =
+        end;
+
+
+    saveSettings();
+
+    showToast(
+        "Working hours saved."
+    );
+
+}
+
+
+/* ============================================================
+   DATA EXPORT
+============================================================ */
+
+function exportData() {
+
+    const data = {
+
+        version: 3,
+
+        exportedAt:
+            new Date().toISOString(),
+
+        tasks,
+
+        manualBlocks,
+
+        settings
+
+    };
+
+
+    const blob =
+        new Blob(
+            [
+                JSON.stringify(
+                    data,
+                    null,
+                    2
+                )
+            ],
+            {
+                type:
+                    "application/json"
+            }
+        );
+
+
+    const url =
+        URL.createObjectURL(
+            blob
+        );
+
+
+    const anchor =
+        document.createElement("a");
+
+
+    anchor.href =
+        url;
+
+
+    anchor.download =
+        `taskflow-backup-${
+            dateKey(new Date())
+        }.json`;
+
+
+    anchor.click();
+
+
+    URL.revokeObjectURL(
+        url
+    );
+
+
+    showToast(
+        "Backup exported."
+    );
+
+}
+
+
+/* ============================================================
+   DATA IMPORT
+============================================================ */
+
+function importData(event) {
+
+    const file =
+        event.target.files[0];
+
+
+    if (!file) return;
+
+
+    const reader =
+        new FileReader();
+
+
+    reader.onload =
+        function() {
+
+            try {
+
+                const data =
+                    JSON.parse(
+                        reader.result
+                    );
+
+
+                if (
+                    !Array.isArray(
+                        data.tasks
+                    )
+                ) {
+
+                    throw new Error(
+                        "Invalid backup"
+                    );
+
+                }
+
+
+                tasks =
+                    data.tasks;
+
+
+                manualBlocks =
+                    Array.isArray(
+                        data.manualBlocks
+                    )
+                        ? data.manualBlocks
+                        : [];
+
+
+                settings =
+                    {
+                        ...DEFAULT_SETTINGS,
+                        ...(data.settings || {})
+                    };
+
+
+                saveTasks();
+
+                saveBlocks();
+
+                saveSettings();
+
+                renderApplication();
+
+
+                showToast(
+                    "Backup imported."
+                );
+
+            }
+
+            catch (error) {
+
+                console.error(
+                    error
+                );
+
+                showToast(
+                    "Invalid backup file."
+                );
+
+            }
+
+        };
+
+
+    reader.readAsText(file);
+
+}
+
+
+/* ============================================================
+   RESET
+============================================================ */
+
+function resetEverything() {
+
+    if (
+        !confirm(
+            "This will permanently delete all tasks and schedules. Continue?"
+        )
+    ) {
+
+        return;
+
+    }
+
+
+    tasks = [];
+
+    manualBlocks = [];
+
+    settings =
+        {
+            ...DEFAULT_SETTINGS
+        };
+
+
+    saveTasks();
+
+    saveBlocks();
+
+    saveSettings();
+
+    renderApplication();
+
+    showToast(
+        "Everything has been reset."
+    );
+
+}
+
+
+/* ============================================================
+   STATS
+============================================================ */
+
+function renderStatistics() {
+
+    const today =
+        dateKey(selectedDate);
+
+
+    const todayTasks =
+        tasks.filter(
+            task =>
+                task.date === today ||
+                task.scheduledDate === today
+        );
+
+
+    const completed =
+        todayTasks.filter(
+            task =>
+                task.completed
+        );
+
+
+    const planned =
+        todayTasks
+            .filter(
+                task =>
+                    task.scheduledDate === today
+            )
+            .reduce(
+                (sum, task) =>
+                    sum + task.duration,
+                0
+            );
+
+
+    const remaining =
+        todayTasks
+            .filter(
+                task =>
+                    !task.completed
+            )
+            .reduce(
+                (sum, task) =>
+                    sum + task.duration,
+                0
+            );
+
+
+    const total =
+        todayTasks.reduce(
+            (sum, task) =>
+                sum + task.duration,
+            0
+        );
+
+
+    const progress =
+        total > 0
+            ? Math.round(
+                (
+                    completed.reduce(
+                        (sum, task) =>
+                            sum + task.duration,
+                        0
+                    ) /
+                    total
+                ) * 100
+            )
+            : 0;
+
+
+    $("#completedStat")
+        .textContent =
+        completed.length;
+
+
+    $("#plannedStat")
+        .textContent =
+        formatDuration(planned);
+
+
+    $("#remainingStat")
+        .textContent =
+        formatDuration(remaining);
+
+
+    $("#progressStat")
+        .textContent =
+        `${progress}%`;
+
+}
+
+
+/* ============================================================
+   COUNTERS
+============================================================ */
+
+function updateNavigationCounts() {
+
+    const today =
+        dateKey(new Date());
+
+
+    const todayCount =
+        tasks.filter(
+            task =>
+                !task.completed &&
+                (
+                    task.date === today ||
+                    task.scheduledDate === today
+                )
+        ).length;
+
+
+    const inboxCount =
+        tasks.filter(
+            task =>
+                !task.completed &&
+                !task.date &&
+                !task.scheduledDate
+        ).length;
+
+
+    $("#todayTaskCount")
+        .textContent =
+        todayCount;
+
+
+    $("#inboxTaskCount")
+        .textContent =
+        inboxCount;
+
+}
+
+
+/* ============================================================
+   PAGE TITLES
+============================================================ */
+
+function renderPageHeader() {
+
+    let title =
+        "Today";
+
+    let subtitle =
+        formatDate(selectedDate);
+
+
+    if (currentView === "inbox") {
+
+        title = "Inbox";
+
+        subtitle =
+            "Unorganized tasks";
+
+    }
+
+
+    else if (
+        currentView === "upcoming"
+    ) {
+
+        title = "Upcoming";
+
+        subtitle =
+            "Your future tasks";
+
+    }
+
+
+    else if (
+        currentView === "completed"
+    ) {
+
+        title = "Completed";
+
+        subtitle =
+            "Finished tasks";
+
+    }
+
+
+    $("#pageTitle")
+        .textContent =
+        title;
+
+
+    $("#pageSubtitle")
+        .textContent =
+        subtitle;
+
+
+    $("#calendarDate")
+        .textContent =
+        formatDate(selectedDate);
+
+}
+
+
+/* ============================================================
+   TASK PANEL SUBTITLE
+============================================================ */
+
+function updateTaskPanelSubtitle(count) {
+
+    $("#taskPanelSubtitle")
+        .textContent =
+        `${count} ${
+            count === 1
+                ? "task"
+                : "tasks"
+        }`;
+
+}
+
+
+/* ============================================================
+   APPLICATION RENDER
+============================================================ */
+
+function renderApplication() {
+
+    renderPageHeader();
+
+    renderTasks();
+
+    renderCalendar();
+
+    renderStatistics();
+
+    updateNavigationCounts();
+
+}
+
+
+/* ============================================================
+   MOBILE SIDEBAR
+============================================================ */
+
+function toggleMobileSidebar() {
+
+    document.body.classList.toggle(
+        "sidebar-open"
+    );
+
+}
+
+
+function closeMobileSidebar() {
+
+    document.body.classList.remove(
+        "sidebar-open"
+    );
+
+}
+
+
+/* ============================================================
+   KEYBOARD SHORTCUTS
+============================================================ */
+
+function handleKeyboardShortcuts(event) {
+
+    if (
+        event.target.matches(
+            "input, textarea, select"
+        )
+    ) {
+
+        if (
+            event.key === "Escape"
+        ) {
+
+            event.target.blur();
+
+        }
+
+        return;
+
+    }
+
+
+    if (
+        event.key === "n" ||
+        event.key === "N"
+    ) {
+
+        event.preventDefault();
+
+        openTaskModal();
+
+        return;
+
+    }
+
+
+    if (
+        event.key === "/"
+    ) {
+
+        event.preventDefault();
+
+        openSearch();
+
+        return;
+
+    }
+
+
+    if (
+        event.key === "Escape"
+    ) {
+
+        $$(".modal-overlay")
+            .forEach(
+                modal =>
+                    modal.classList.add(
+                        "hidden"
+                    )
+            );
+
+    }
+
+}
+
+
+/* ============================================================
+   WEEK UTILITIES
+============================================================ */
+
+function startOfWeek(date) {
+
+    const result =
+        new Date(date);
+
+
+    const day =
+        result.getDay();
+
+
+    const difference =
+        day === 0
+            ? -6
+            : 1 - day;
+
+
+    result.setDate(
+        result.getDate() +
+        difference
+    );
+
+
+    return result;
+
+}
+
+
+/* ============================================================
+   MATH UTILITIES
+============================================================ */
+
+function snapTo15Minutes(minutes) {
+
+    return Math.round(
+        minutes / 15
+    ) * 15;
+
+}
+
+
+function clamp(
+    value,
+    min,
+    max
+) {
+
+    return Math.max(
+        min,
+        Math.min(
+            max,
+            value
+        )
+    );
+
+}
+
+
+/* ============================================================
+   HTML ESCAPING
+============================================================ */
+
+function escapeHTML(value) {
+
+    return String(value ?? "")
+        .replaceAll(
+            "&",
+            "&amp;"
+        )
+        .replaceAll(
+            "<",
+            "&lt;"
+        )
+        .replaceAll(
+            ">",
+            "&gt;"
+        )
+        .replaceAll(
+            '"',
+            "&quot;"
+        )
+        .replaceAll(
+            "'",
+            "&#039;"
+        );
+
+}
+
+
+function capitalize(value) {
+
+    if (!value) return "";
+
+    return (
+        value.charAt(0).toUpperCase() +
+        value.slice(1)
+    );
+
+}
+
+
+/* ============================================================
+   TOASTS
+============================================================ */
+
+function showToast(message) {
+
+    const container =
+        $("#toastContainer");
+
+
+    const toast =
+        document.createElement("div");
+
+
+    toast.className =
+        "toast";
+
+
+    toast.textContent =
+        message;
+
+
+    container.appendChild(
+        toast
+    );
+
+
+    setTimeout(
+        () => {
+
+            toast.remove();
+
+        },
+        2800
+    );
+
+}
+
+
+/* ============================================================
+   INITIAL CALENDAR DROP
+============================================================ */
+
+function setupCalendarDropEvents() {
+
+    const timeline =
+        $("#calendarTimeline");
+
+
+    if (!timeline) return;
+
+
+    timeline.addEventListener(
+        "dragover",
+        event => {
+
+            event.preventDefault();
+
+        }
+    );
+
+
+    timeline.addEventListener(
+        "drop",
+        event => {
+
+            event.preventDefault();
+
+
+            if (!draggedItem) return;
+
+
+            const rect =
+                timeline.getBoundingClientRect();
+
+
+            const y =
+                event.clientY -
+                rect.top +
+                timeline.scrollTop;
+
+
+            const minutes =
+                clamp(
+                    snapTo15Minutes(y),
+                    0,
+                    1439
+                );
+
+
+            if (
+                draggedItem.type ===
+                "task"
+            ) {
+
+                moveTaskToSchedule(
+                    draggedItem.id,
+                    dateKey(selectedDate),
+                    minutes
+                );
+
+            }
+
+
+            else if (
+                draggedItem.type ===
+                "manual"
+            ) {
+
+                moveManualBlock(
+                    draggedItem.id,
+                    dateKey(selectedDate),
+                    minutes
+                );
+
+            }
+
+
+            draggedItem = null;
+
+        }
+    );
+
+}
+
+
+/* ============================================================
+   RUN DROP SETUP AGAIN AFTER DOM IS READY
+============================================================ */
+
+setupCalendarDropEvents();
+
+
+/* ============================================================
+   DEMO DATA
+============================================================ */
+
+/*
+    The app starts empty.
+
+    To add example tasks, set this to true.
+*/
+
+const LOAD_DEMO_DATA =
+    false;
+
+
+function loadDemoData() {
+
+    if (
+        !LOAD_DEMO_DATA ||
+        tasks.length
+    ) {
+
+        return;
+
+    }
+
+
+    const today =
+        dateKey(new Date());
+
+
+    tasks = [
+
+        {
+
+            id:
+                generateId("task"),
+
+            title:
+                "Physics revision",
+
+            duration:
+                90,
+
+            priority:
+                "high",
+
+            date:
+                today,
+
+            deadline:
+                today,
+
+            project:
+                "Physics",
+
+            notes:
+                "Revise current chapter.",
+
+            completed:
+                false,
+
+            scheduledDate:
+                null,
+
+            startMinutes:
+                null,
+
+            createdAt:
+                Date.now()
+
+        },
+
+
+        {
+
+            id:
+                generateId("task"),
+
+            title:
+                "Mathematics practice",
+
+            duration:
+                60,
+
+            priority:
+                "high",
+
+            date:
+                today,
+
+            deadline:
+                today,
+
+            project:
+                "Maths",
+
+            notes:
+                "",
+
+            completed:
+                false,
+
+            scheduledDate:
+                null,
+
+            startMinutes:
+                null,
+
+            createdAt:
+                Date.now()
+
+        },
+
+
+        {
+
+            id:
+                generateId("task"),
+
+            title:
+                "English assignment",
+
+            duration:
+                30,
+
+            priority:
+                "low",
+
+            date:
+                today,
+
+            deadline:
+                today,
+
+            project:
+                "English",
+
+            notes:
+                "",
+
+            completed:
+                false,
+
+            scheduledDate:
+                null,
+
+            startMinutes:
+                null,
+
+            createdAt:
+                Date.now()
+
+        }
+
+    ];
+
+
+    saveTasks();
+
+}
+
+
+/* ============================================================
+   FINAL STARTUP
+============================================================ */
+
+loadDemoData();
+
+renderApplication();
